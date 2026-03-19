@@ -1,0 +1,56 @@
+name: Daily Quran Short Upload
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-hosny-amiri fonts-dejavu fonts-arabeyes
+
+      - name: Copy fonts
+        run: |
+          mkdir -p fonts
+          cp /usr/share/fonts/truetype/hosny-amiri/Amiri-Regular.ttf fonts/ 2>/dev/null || \
+          find /usr/share/fonts -name "*.ttf" | grep -i "amiri\|arab" | head -1 | xargs -I{} cp {} fonts/Amiri-Regular.ttf
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf fonts/ 2>/dev/null || true
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Restore YouTube token
+        run: echo '${{ secrets.YOUTUBE_TOKEN }}' > token.json
+
+      - uses: actions/cache@v4
+        with:
+          path: data/progress.json
+          key: quran-progress-${{ github.run_number }}
+          restore-keys: quran-progress-
+
+      - name: Run bot
+        run: python main.py
+
+      - name: Commit progress
+        run: |
+          git config user.name "Quran Bot"
+          git config user.email "bot@quranshorts.auto"
+          git add data/progress.json
+          git diff --staged --quiet || git commit -m "progress: $(date +'%Y-%m-%d')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
