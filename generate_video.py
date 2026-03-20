@@ -1,7 +1,6 @@
 import requests, os, random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from bidi.algorithm import get_display
 import arabic_reshaper
 from moviepy.editor import AudioFileClip, VideoFileClip, ImageClip, CompositeVideoClip, ColorClip, concatenate_videoclips, concatenate_audioclips
 from moviepy.audio.AudioClip import AudioArrayClip
@@ -10,15 +9,15 @@ VIDEO_WIDTH  = 1080
 VIDEO_HEIGHT = 1920
 FPS          = 30
 TARGET_DUR   = 59.0
-FONT_AR_PATH = "fonts/Amiri-Regular.ttf"
+FONT_AR_PATH = "fonts/ArabicBold.ttf"
 FONT_EN_PATH = "fonts/DejaVuSans.ttf"
 PEXELS_KEY   = os.environ.get("PEXELS_API_KEY", "agiQsdsM9GHC0XFD91gaX2611yzowQLOi2eeKep8baYsObL7N0MdP5e0")
 
 NATURE_QUERIES = [
-    "waterfall nature","forest trees","ocean waves","sunset sky",
-    "river stream","mountains nature","rain nature","clouds sky",
-    "desert sand","flowers nature","green nature","lake reflection",
-    "sunrise nature","snow mountains"
+    "road nature","waterfall nature","forest trees","ocean waves",
+    "sunset sky","river stream","mountains nature","rain nature",
+    "clouds sky","desert sand","flowers nature","green nature",
+    "lake reflection","sunrise nature","snow mountains"
 ]
 
 SURAH_LENGTHS = {
@@ -51,12 +50,12 @@ def get_ayah_data(surah, ayah):
     ar = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/ar.alafasy", timeout=15).json()
     en = requests.get(f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/en.asad", timeout=15).json()
     return {
-        "arabic":       ar["data"]["text"],
-        "english":      en["data"]["text"],
-        "surah_name":   ar["data"]["surah"]["name"],
+        "arabic":        ar["data"]["text"],
+        "english":       en["data"]["text"],
+        "surah_name":    ar["data"]["surah"]["name"],
         "surah_name_en": ar["data"]["surah"]["englishName"],
-        "ayah_number":  ar["data"]["numberInSurah"],
-        "surah_number": surah,
+        "ayah_number":   ar["data"]["numberInSurah"],
+        "surah_number":  surah,
     }
 
 def download_audio_ayah(surah, ayah):
@@ -68,50 +67,35 @@ def download_audio_ayah(surah, ayah):
     return path
 
 def collect_ayahs(start_surah, start_ayah):
-    """يجمع آيات متتالية لحد ما يوصل 59 ثانية"""
-    clips    = []
-    ayahs    = []
-    total    = 0.0
+    clips, ayahs = [], []
+    total = 0.0
     surah, ayah = start_surah, start_ayah
-
     while total < TARGET_DUR:
         try:
-            print(f"[audio] جاري تنزيل سورة {surah} آية {ayah}...")
+            print(f"[audio] سورة {surah} آية {ayah}...")
             ap = download_audio_ayah(surah, ayah)
             ac = AudioFileClip(ap)
             dur = ac.duration
-
             if total + dur > TARGET_DUR and clips:
                 os.remove(ap)
                 break
-
             clips.append(ac)
             ayahs.append({"surah": surah, "ayah": ayah, "path": ap})
             total += dur
-            print(f"[audio] إجمالي: {total:.1f}s")
-
+            print(f"[audio] {total:.1f}s")
             surah, ayah = next_ayah_ref(surah, ayah)
-
         except Exception as e:
-            print(f"[audio] خطأ في سورة {surah} آية {ayah}: {e}")
+            print(f"[audio] خطأ: {e}")
             surah, ayah = next_ayah_ref(surah, ayah)
             continue
-
-    # دمج الصوت
     if not clips:
         return None, [], start_surah, start_ayah
-
     combined = concatenate_audioclips(clips)
-
-    # لو أقل من 59 ثانية — نضيف صمت
     if combined.duration < TARGET_DUR:
-        silence_dur = TARGET_DUR - combined.duration
-        silence_arr = np.zeros((int(silence_dur * 44100), 2))
+        silence_arr = np.zeros((int((TARGET_DUR - combined.duration) * 44100), 2))
         silence     = AudioArrayClip(silence_arr, fps=44100)
         combined    = concatenate_audioclips([combined, silence])
-
     combined = combined.subclip(0, TARGET_DUR)
-
     return combined, ayahs, surah, ayah
 
 def fix_ar(text):
@@ -120,84 +104,97 @@ def fix_ar(text):
     except:
         return text
 
-def tw(draw, text, font):
+def get_text_width(draw, text, font):
     try:
         return int(draw.textlength(text, font=font))
     except:
         return draw.textbbox((0,0), text, font=font)[2]
 
-def sh(draw, pos, text, font, fill):
-    x, y = pos
-    draw.text((x+4, y+4), text, font=font, fill=(0,0,0,230))
-    draw.text((x,   y  ), text, font=font, fill=fill)
+def get_text_height(draw, text, font):
+    bbox = draw.textbbox((0,0), text, font=font)
+    return bbox[3] - bbox[1]
+
+def wrap_text(draw, text, font, max_width):
+    words = text.split()
+    lines, current = [], []
+    for word in words:
+        test = " ".join(current + [word])
+        if get_text_width(draw, test, font) > max_width and current:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+def draw_text_shadow(draw, x, y, text, font, fill=(255,255,255,255), shadow_color=(0,0,0,180), shadow_offset=3):
+    draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill=shadow_color)
+    draw.text((x, y), text, font=font, fill=fill)
 
 def create_overlay(ayahs_data):
-    """يعرض كل الآيات في الفيديو"""
     img  = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0,0,0,0))
-    dark = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0,0,0,120))
-    img  = Image.alpha_composite(img, dark)
+
+    # ظل خفيف فقط خلف النص — مش overlay كامل
+    shadow_layer = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0,0,0,0))
+    sh_draw      = ImageDraw.Draw(shadow_layer)
+
     draw = ImageDraw.Draw(img)
 
     try:
-        far_big = ImageFont.truetype(FONT_AR_PATH, 72)
-        far_med = ImageFont.truetype(FONT_AR_PATH, 50)
-        far_sm  = ImageFont.truetype(FONT_AR_PATH, 36)
-        fen_med = ImageFont.truetype(FONT_EN_PATH, 30)
-        fen_sm  = ImageFont.truetype(FONT_EN_PATH, 24)
-    except:
-        far_big = far_med = far_sm = fen_med = fen_sm = ImageFont.load_default()
+        far_big  = ImageFont.truetype(FONT_AR_PATH, 82)
+        far_med  = ImageFont.truetype(FONT_AR_PATH, 46)
+        fen_med  = ImageFont.truetype(FONT_EN_PATH, 34)
+        fen_sm   = ImageFont.truetype(FONT_EN_PATH, 24)
+    except Exception as e:
+        print(f"font error: {e}")
+        far_big = far_med = fen_med = fen_sm = ImageFont.load_default()
 
-    gold  = (255, 210, 70,  255)
-    white = (255, 255, 255, 255)
-    lgray = (200, 220, 255, 200)
-    cx    = VIDEO_WIDTH // 2
-    mg    = 70
-    mw    = VIDEO_WIDTH - mg * 2
+    cx = VIDEO_WIDTH // 2
+    mg = 80
+    mw = VIDEO_WIDTH - mg * 2
 
-    def wrap(text, font):
-        words = text.split()
-        lines, cur = [], []
-        for w in words:
-            test = " ".join(cur + [w])
-            if tw(draw, test, font) > mw and cur:
-                lines.append(" ".join(cur))
-                cur = [w]
-            else:
-                cur.append(w)
-        if cur:
-            lines.append(" ".join(cur))
-        return lines
+    # حساب ارتفاع كل الآيات عشان نحط shadow صح
+    total_content_height = 0
+    ayah_renders = []
 
-    # ── بسم الله ──
-    bism = fix_ar("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ")
-    sh(draw, (cx - tw(draw,bism,far_sm)//2, 130), bism, far_sm, gold)
-    draw.line([(mg,210),(VIDEO_WIDTH-mg,210)], fill=(255,210,70,150), width=2)
-
-    # ── اسم السورة الأولى ──
-    first = ayahs_data[0]
-    sl = fix_ar(f"سورة {first['surah_name']}  ﴿{first['ayah_number']} - {ayahs_data[-1]['ayah_number']}﴾")
-    sh(draw, (cx - tw(draw,sl,far_med)//2, 240), sl, far_med, gold)
-    draw.line([(mg,310),(VIDEO_WIDTH-mg,310)], fill=(255,210,70,80), width=1)
-
-    # ── الآيات ──
-    y = 350
     for d in ayahs_data:
-        # رقم الآية
-        num = fix_ar(f"﴿{d['ayah_number']}﴾")
-        sh(draw, (cx - tw(draw,num,far_sm)//2, y), num, far_sm, gold)
-        y += 50
+        ar_lines = wrap_text(draw, fix_ar(d['arabic']), far_big, mw)
+        en_lines = wrap_text(draw, d['english'], fen_med, mw)
+        h = len(ar_lines) * 95 + len(en_lines) * 45 + 60
+        ayah_renders.append({"ar": ar_lines, "en": en_lines, "h": h, "data": d})
+        total_content_height += h
 
-        # نص الآية
-        ar_lines = wrap(fix_ar(d['arabic']), far_big)
-        for line in ar_lines:
-            sh(draw, (cx - tw(draw,line,far_big)//2, y), line, far_big, white)
-            y += 88
+    # ابدأ من المنتصف
+    start_y = (VIDEO_HEIGHT - total_content_height) // 2
+    current_y = start_y
 
-        y += 15
+    # shadow خلف النص بس
+    padding = 40
+    sh_draw.rectangle(
+        [mg - padding, start_y - padding,
+         VIDEO_WIDTH - mg + padding, start_y + total_content_height + padding],
+        fill=(0, 0, 0, 100)
+    )
+    img = Image.alpha_composite(img, shadow_layer)
+    draw = ImageDraw.Draw(img)
 
-    # ── هاشتاقات ──
-    tags = "#Quran #Islam #QuranShorts #قرآن #إسلام"
-    draw.text((cx - tw(draw,tags,fen_sm)//2, VIDEO_HEIGHT-110), tags, font=fen_sm, fill=(150,180,200,170))
+    for render in ayah_renders:
+        # النص العربي
+        for line in render["ar"]:
+            lw = get_text_width(draw, line, far_big)
+            draw_text_shadow(draw, cx - lw//2, current_y, line, far_big,
+                           fill=(255, 255, 255, 255), shadow_color=(0,0,0,200), shadow_offset=4)
+            current_y += 95
+
+        # الترجمة الإنجليزية
+        for line in render["en"]:
+            lw = get_text_width(draw, line, fen_med)
+            draw_text_shadow(draw, cx - lw//2, current_y, line, fen_med,
+                           fill=(220, 220, 220, 230), shadow_color=(0,0,0,180), shadow_offset=2)
+            current_y += 45
+
+        current_y += 60  # مسافة بين الآيات
 
     tmp = "temp_overlay.png"
     img.save(tmp)
@@ -205,7 +202,7 @@ def create_overlay(ayahs_data):
 
 def download_nature_video(query_index):
     query = NATURE_QUERIES[query_index % len(NATURE_QUERIES)]
-    print(f"[Pexels] فيديو: {query}")
+    print(f"[Pexels] {query}")
     headers = {"Authorization": PEXELS_KEY}
     try:
         r = requests.get(
@@ -231,14 +228,11 @@ def download_nature_video(query_index):
     return None
 
 def generate_video(start_surah, start_ayah, output_path="output_video.mp4", query_index=0):
-    # ── جمع الآيات والصوت ──
-    print("[*] جمع الآيات...")
+    print(f"[*] جمع الآيات...")
     audio_combined, ayahs, next_s, next_a = collect_ayahs(start_surah, start_ayah)
-
     if not audio_combined:
         raise Exception("فشل تنزيل الصوت!")
 
-    # جلب بيانات الآيات
     ayahs_data = []
     for ref in ayahs:
         try:
@@ -247,9 +241,9 @@ def generate_video(start_surah, start_ayah, output_path="output_video.mp4", quer
         except:
             pass
 
-    print(f"[*] عدد الآيات: {len(ayahs_data)}")
+    print(f"[*] {len(ayahs_data)} آيات")
 
-    # ── خلفية الطبيعة ──
+    # خلفية الطبيعة
     bg_path = download_nature_video(query_index)
     if bg_path and os.path.exists(bg_path):
         bg_raw = VideoFileClip(bg_path)
@@ -269,15 +263,12 @@ def generate_video(start_surah, start_ayah, output_path="output_video.mp4", quer
     else:
         bg = ColorClip(size=(VIDEO_WIDTH,VIDEO_HEIGHT), color=(10,20,40), duration=TARGET_DUR)
 
-    # ── overlay ──
     overlay_path = create_overlay(ayahs_data)
     overlay = ImageClip(overlay_path).set_duration(TARGET_DUR)
 
-    # ── دمج ──
     final = CompositeVideoClip([bg, overlay]).set_duration(TARGET_DUR).set_audio(audio_combined)
     final.write_videofile(output_path, fps=FPS, codec="libx264", audio_codec="aac", preset="fast", threads=4, logger="bar")
 
-    # تنظيف
     for ref in ayahs:
         if os.path.exists(ref["path"]):
             os.remove(ref["path"])
@@ -286,5 +277,5 @@ def generate_video(start_surah, start_ayah, output_path="output_video.mp4", quer
             try: os.remove(f)
             except: pass
 
-    print(f"[OK] الفيديو جاهز: {output_path}")
+    print(f"[OK] {output_path}")
     return output_path, next_s, next_a

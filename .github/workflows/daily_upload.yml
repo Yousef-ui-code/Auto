@@ -2,12 +2,15 @@ name: Daily Quran Short Upload
 
 on:
   schedule:
-    - cron: "0 6 * * *"    # 8 صباحاً القاهرة
-    - cron: "0 11 * * *"   # 1 ظهراً القاهرة
-    - cron: "0 14 * * *"   # 4 عصراً القاهرة
-    - cron: "0 17 * * *"   # 7 مساءً القاهرة
-    - cron: "0 20 * * *"   # 10 مساءً القاهرة
+    - cron: "0 6 * * *"
+    - cron: "0 11 * * *"
+    - cron: "0 14 * * *"
+    - cron: "0 17 * * *"
+    - cron: "0 20 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   upload:
@@ -16,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -26,13 +29,14 @@ jobs:
         run: |
           sudo rm /etc/apt/sources.list.d/yarn.list 2>/dev/null || true
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-hosny-amiri fonts-dejavu fonts-arabeyes fonts-noto
+          sudo apt-get install -y ffmpeg fonts-hosny-amiri fonts-dejavu fonts-noto
 
       - name: Copy fonts
         run: |
           mkdir -p fonts
-          cp /usr/share/fonts/truetype/noto/NotoSansArabic-SemiCondensed.ttf fonts/Arabic.ttf
+          cp /usr/share/fonts/truetype/noto/NotoSansArabic-SemiCondensed.ttf fonts/Arabic.ttf 2>/dev/null || true
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf fonts/ 2>/dev/null || true
+          wget -q "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Bold.ttf" -O fonts/ArabicBold.ttf
 
       - name: Install Python deps
         run: pip install -r requirements.txt
@@ -64,4 +68,4 @@ jobs:
           git diff --staged --quiet || git commit -m "progress: $(date +'%Y-%m-%d %H:%M')"
           git push
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
