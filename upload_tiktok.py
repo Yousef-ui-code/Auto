@@ -11,7 +11,7 @@ def upload_to_tiktok(video_path, ayah_data):
     title = "ayah " + str(num) + " surah " + str(surah) + " #shorts #quran #islam #قرآن"
     print("[TikTok] جاري الرفع...")
     try:
-        auth = AuthBackend(email=TIKTOK_EMAIL, password=TIKTOK_PASSWORD)
+        auth = AuthBackend(username=TIKTOK_EMAIL, password=TIKTOK_PASSWORD)
         upload_video(video_path, description=title, auth=auth)
         print("[TikTok] تم الرفع!")
         return True
