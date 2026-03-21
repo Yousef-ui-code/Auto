@@ -40,6 +40,13 @@ def main():
     # رفع يوتيوب
     url = upload_video(OUTPUT_VIDEO, first_data)
 
+    # رفع على TikTok
+    try:
+        from upload_tiktok import upload_to_tiktok
+        upload_to_tiktok(OUTPUT_VIDEO, first_data)
+    except Exception as e:
+        print(f"[TikTok] فشل: {e}")
+
     # حفظ التقدم — نحفظ آخر آية وصلناها
     p.update({
         "last_surah":    next_s,
