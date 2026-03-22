@@ -40,6 +40,13 @@ def main():
     # رفع يوتيوب
     url = upload_video(OUTPUT_VIDEO, first_data)
 
+    # رفع على Dropbox (لـ TikTok عبر Make)
+    try:
+        from upload_dropbox import upload_to_dropbox
+        upload_to_dropbox(OUTPUT_VIDEO, first_data)
+    except Exception as e:
+        print("[Dropbox] فشل: " + str(e))
+
     # رفع على TikTok
     try:
         from upload_tiktok import upload_to_tiktok
